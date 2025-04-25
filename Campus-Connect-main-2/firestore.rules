@@ -1,0 +1,97 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Rules for users collection
+    match /users/{userId} {
+      allow read, update, delete: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null;
+      // Allow reading single user doc (e.g., for profiles) if logged in
+      allow get: if request.auth != null;
+
+      match /enrolledCourses/{courseDocId} {
+         // Allow anyone to read the list of enrolled courses
+         allow read: if true;
+         // Allow ONLY the specific student to create, update, delete their courses
+         allow write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Rules for Experience Subcollection
+      match /experiences/{experienceId} {
+        // Allow owner to read/create/update/delete their own experience entries
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+        // Allow any logged-in user to read others' experiences (for public profile view)
+        // allow read: if request.auth != null; // Add this line back if needed for public view later
+      }
+    }
+
+    // Allow listing users (e.g., for directory) if logged in
+    match /users/{document=**} {
+      allow list: if request.auth != null;
+    }
+
+    // Rules for courses collection (Consider making these more specific later)
+    match /courses/{courseId} {
+      // Allow anyone to read course information
+      allow read: if true;
+      // Allow create, update, delete only if user is logged in AND
+      // their UID matches the professorId stored in the course document.
+      allow create, update, delete: if request.auth != null && request.auth.uid == request.resource.data.professorId;
+      // Note: For update/delete, you might compare against 'resource.data.professorId'
+      // if the professorId isn't expected to change. Let's refine update/delete:
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.professorId;
+    }
+
+    // Rules for research collection
+    match /research/{docId} {
+      // Allow owner to read, create, update, delete
+      allow read: if request.auth != null && resource.data.professorId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.professorId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.professorId == request.auth.uid;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.professorId;
+    }
+
+    // Rules for the 'opportunities' collection
+    match /opportunities/{opportunityId} {
+      // Allow any logged-in user to read opportunities
+      allow read: if request.auth != null;
+      // Allow creation only by users with role 'professor'
+      allow create: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'professor';
+      // Allow updates/deletes only by the professor who created it
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.professorId;
+    }
+
+    // --- Rules for 'interests' collection (Restored Secure List Rule) ---
+    match /interests/{interestId} {
+      // Students can create their own interest records if they have 'student' role
+      allow create: if request.auth != null &&
+                       request.resource.data.studentId == request.auth.uid &&
+                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'student';
+
+      // Students can read (get) or delete ONLY their own interest records
+      allow get, delete: if request.auth != null && request.auth.uid == resource.data.studentId;
+
+      // Allow professors to GET any single interest document IF they own the opportunity
+      // (This rule might overlap with student 'get', Firestore allows if *any* rule passes)
+      allow get: if request.auth != null &&
+                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'professor' &&
+                    resource.data.professorId == request.auth.uid;
+
+      // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+      // UPDATED LIST RULE: Allow professors OR students querying their own interests
+      allow list: if
+          // Condition 1: Allow professors (based on role check)
+          (request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'professor') ||
+          // Condition 2: Allow students IF the FIRST query filter is studentId == their own UID
+          (request.auth != null &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'student' 
+          );
+      // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+      // Prevent updating interest records directly
+      allow update: if false;
+    }
+    // --- End Rules for 'interests' ---
+  }
+}
